@@ -1,15 +1,10 @@
-import numpy as np
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from SG_solver import rbf_matrix, second_divided_difference
-
-from fractal_SG_solver import d2_fractal_L_W2, ddphi, H5_dd, pointwise_fractal
-
-from alpha_fractal_function import alpha_fractalize, alpha_fractalize_second_derivative
-
 import os
 import wandb
-
+import numpy as np
+from tqdm import tqdm
+from SG_solver import rbf_matrix, second_divided_difference
+from fractal_SG_solver import d2_fractal_L_W2, ddphi, H5_dd, pointwise_fractal
+from alpha_fractal_function import alpha_fractalize, alpha_fractalize_second_derivative
 from fractal_sweep_config import sweep_config
 
 # Authenticate with Weights & Biases (uses WANDB_API_KEY environment variable or cached login)
@@ -36,6 +31,15 @@ h = 0.01
 tau = 0.01
 ################
 T = 1.0
+
+
+
+#=============================================================================
+# Parameter for Fourier Series and Trapezoidal Rule
+#=============================================================================
+M = 2000                # Number of terms in Fourier series: 
+N_partition = 2000      # Number of partitions for Trapezoidal rule
+#=============================================================================
 
 n = (b - a) / h
 
@@ -72,65 +76,30 @@ for j in range(1, N + 1):
 # ==============================================================================
 # Initial Displacement Function u(x, 0) = sin^{\alpha}(x)
 # ==============================================================================
-# Base function f(x) = sin(x) (Changed from sin(pi * x) to sin(x))
 def f(x_val):
     return np.sin(x_val)
 
-# Base function g(x) satisfying endpoint conditions g(a) == f(a) and g(b) == f(b)
-# For f(x) = sin(x) on [-1, 1], the linear base function joining (-1, sin(-1)) and (1, sin(1)) is:
+# Base function for sin(x) fractalization
 def g(x_val):
     return np.sin(1.0) * x_val
 
 # Fractal parameters for generating the alpha-fractal function sin^{\alpha}(x)
 f_beta = [0.005, 0.0025, 0.0025, 0.005]
 subintervals = len(f_beta)
-iter_count = 6
+iter_count = 8
 sine_fractal = alpha_fractalize(f, g, -1, 1, subintervals, f_beta, iter_count)
 
 def sin_alpha(x_pts):
-    """
-    Initial displacement function u(x, 0) = sin^{\alpha}(x).
-    Evaluates the alpha-fractalized sine function constructed via alpha_fractalize.
-    The analytical solution depends on this choice of initial displacement.
-    """
     return pointwise_fractal(x_pts, sine_fractal)
 
-# Pre-evaluate and STORE sin^{\alpha}(x) on the spatial grid x (201 points, h=0.01)
+# Store sin^{\alpha}(x) on the spatial grid x (201 points, h=0.01)
 sin_alpha_grid = np.asarray(pointwise_fractal(x, sine_fractal))
 
-# ==============================================================================
-# Analytical Exact Solution via Fourier Series & Trapezoidal Rule
-# ==============================================================================
-# PDE:
-#   u_{tt} = u_{xx},            -1 < x < 1, t > 0
-#   u(x, 0) = sin^{\alpha}(x),  -1 <= x <= 1
-#   u_t(x, 0) = 0,              -1 <= x <= 1
-#   u(-1, t) = u(1, t) = 0,     t >= 0
-#
-# Analytical Solution:
-#   u(x, t) = \sum_{n=1}^{\infty} A_n \cos(n*pi*t/2) \sin(n*pi*(x+1)/2)
-#
-# where:
-#   A_n = \int_{-1}^{1} \sin^{\alpha}(x) \sin(n*pi*(x+1)/2) dx
-#
-# Truncation: \sum_{n=1}^{M}
-#
-# Trapezoidal Formula for integration on partition a = x_0 < x_1 < ... < x_N = b:
-#   \int_a^b f(x) dx \approx (h/2) * [f(x_0) + 2*{f(x_1) + ... + f(x_{N-1})} + f(x_N)]
-# ==============================================================================
-
-# User-configurable parameters (can be changed to try different numbers):
-M = 2000            # Number of terms in Fourier series: \sum_{n=1}^{M}
-N_partition = 2000 # Number of partitions for Trapezoidal rule: a = x_0 < ... < x_N = b
-
-# Partition of [-1, 1]: a = x_0 < x_1 < ... < x_N = b
+# Partition of [-1, 1] for Trapezoidal rule
 x_nodes = np.linspace(a, b, N_partition + 1)
 h_trap = (b - a) / N_partition
 
-# ------------------------------------------------------------------------------
-# Pre-evaluate and STORE sin^{\alpha}(x) from fractalized function BEFORE computing A_n
-# ------------------------------------------------------------------------------
-print(f"Calling and storing sin^alpha(x) from fractalized function at {len(x_nodes)} partition nodes...")
+# Store sin^{\alpha}(x) on the partition nodes
 sin_alpha_partition = np.asarray(pointwise_fractal(x_nodes, sine_fractal))
 
 def trapezoidal_rule(f_vals, h_step):
@@ -144,8 +113,7 @@ def compute_fourier_coefficients(sin_alpha_vals, x_part, h_step, M_terms):
         basis = np.sin(n_mode * np.pi * (x_part + 1.0) / 2.0)
         
         # Integrand: sin^{\alpha}(x) * sin(n * pi * (x + 1) / 2)
-        # Using pre-stored values of sin^{\alpha}(x)
-        integrand = sin_alpha_vals * basis
+        integrand = sin_alpha_vals * basis         # sin_alpha_vals is pre-evaluated and stored
         
         # Trapezoidal rule:
         A_coeffs[idx] = trapezoidal_rule(integrand, h_step)
@@ -164,25 +132,11 @@ def analytical_exact_u(x_pts, t_val, A_coeffs, M_terms):
 
     return u_vals
 
-# ------------------------------------------------------------------------------
-# Precompute Analytical Exact Solution (Calculated ONCE outside optimization loop)
-# ------------------------------------------------------------------------------
-# At t = 1, u(x, t) is computed at the 200 spatial intervals (201 points) with h = 0.01
-# from -1 to 1, exactly matching the numerical solution grid for direct comparison.
-print("=" * 70)
-print(f"Precomputing Analytical Exact Solution (CALCULATED ONCE):")
-print(f"  - Initial displacement: sin^alpha(x) (from sin(x))")
-print(f"  - Series truncation M = {M} terms")
-print(f"  - Trapezoidal partition N = {N_partition} intervals")
-print(f"  - Target time T = {T}")
-print(f"  - Grid points = {len(x)} (h = {h})")
-print("=" * 70)
 
 A_n = compute_fourier_coefficients(sin_alpha_partition, x_nodes, h_trap, M)
 f_u_exact = analytical_exact_u(x, T, A_n, M)
 
-print(f"Exact solution computed successfully. ||u_exact||_max = {np.max(np.abs(f_u_exact)):.6f}")
-print("=" * 70)
+print(f"Exact solution computed successfully.")
 
 # ==============================================================================
 # Optimization Routine
@@ -196,9 +150,9 @@ def fractal_optimization():
    
     wandb.init(settings=wandb.Settings(init_timeout=3000))
     config = wandb.config
-    f_alpha1 = getattr(config, "f_alpha1", 0.0005)
-    f_alpha2 = getattr(config, "f_alpha2", 0.002)
-    f_alpha3 = getattr(config, "f_alpha3", 0.0005)
+    f_alpha1 = config.f_alpha1
+    f_alpha2 = config.f_alpha2
+    f_alpha3 = config.f_alpha3
 
     run_name = f"alpha1-{f_alpha1}_alpha2-{f_alpha2}_alpha3-{f_alpha3}"
     wandb.run.name = run_name
@@ -289,20 +243,7 @@ def fractal_optimization():
 
     return Linf_error, RMS_error
 
-# ==============================================================================
-# Main Execution / Sweep
-# ==============================================================================
 if __name__ == "__main__":
-    import sys
-
-    # Allow running a single trial or full wandb sweep
-    if "--sweep" in sys.argv:
-        sweep_id = wandb.sweep(sweep_config, project="SG_fractal_optimization_analytical")
-        wandb.agent(sweep_id, function=fractal_optimization)
-        print("Sweep complete")
-    else:
-        print("Running single trial with precomputed analytical solution...")
-        linf, rms = fractal_optimization()
-        print(f"Single run completed: Linf error = {linf:.6e}, RMS error = {rms:.6e}")
-        print("To run full wandb sweep, pass --sweep argument.")
-
+    sweep_id = wandb.sweep(sweep_config, project="SG_fractal_optimization_analytical")
+    wandb.agent(sweep_id, function=fractal_optimization)
+    print("Sweep complete")
