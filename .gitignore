@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Wandb logs
+wandb/
+
+# Local archives and scratch
+archive/
+
+# Results and figures (optional local output)
+results/
+Images/
